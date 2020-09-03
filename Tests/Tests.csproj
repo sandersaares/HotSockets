@@ -21,7 +21,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\HotSocketsService\HotSocketsService.csproj" />
     <ProjectReference Include="..\HotSockets\HotSockets.csproj" />
   </ItemGroup>
 
