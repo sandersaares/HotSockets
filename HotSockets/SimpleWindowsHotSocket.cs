@@ -89,12 +89,22 @@ namespace HotSockets
                 _cts.Dispose();
 
                 _localAddress?.Dispose();
-            }
 
-           
+                // Get rid of all buffers.
+                foreach (var buffer in _availableReadBuffers)
+                    buffer.Dispose();
 
-            if (disposing)
+                foreach (var buffer in _availableWriteBuffers)
+                    buffer.Dispose();
+
+                foreach (var buffer in _completedReads)
+                    buffer.Dispose();
+
+                foreach (var buffer in _pendingWriteBuffers)
+                    buffer.Dispose();
+
                 GC.SuppressFinalize(this);
+            }
         }
 
         private IntPtr _socketHandle;
@@ -102,7 +112,7 @@ namespace HotSockets
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
         private readonly INativeMemoryManager _memoryManager;
-        
+
         public AddressFamily LocalAddressFamily { get; }
         public ReadOnlySpan<byte> LocalAddress => _localAddress.Address;
         public ushort LocalPort => _localAddress.Port;
@@ -248,11 +258,23 @@ namespace HotSockets
                     // We should never get 0 to signal disconnect because this is UDP and we do not close the socket until threads finish.
                     // Obviously, there was some sort of error. This is not necessarily critical error - the next read may work, so just loop.
 
-                    InvokeErrorEvent(new SocketException());
+                    try
+                    {
+                        var errorCode = Windows.GetLastSocketError();
 
-                    _availableReadBuffers.Add(buffer); // Put it back - we ended up not using it.
-                    _availableReadBuffersReady.Release();
-                    continue;
+                        // This can be OK if we are shutting down.
+                        if (errorCode == SocketError.Interrupted && _cts.IsCancellationRequested)
+                            break;
+
+                        InvokeErrorEvent(new SocketException((int)errorCode));
+
+                        continue;
+                    }
+                    finally
+                    {
+                        _availableReadBuffers.Add(buffer); // Put it back - we ended up not using it.
+                        _availableReadBuffersReady.Release();
+                    }
                 }
 
                 buffer.Length = bytesRead;
@@ -383,16 +405,27 @@ namespace HotSockets
 
                 var bytesWritten = Windows.sendto(_socketHandle, buffer.Ptr, buffer.Length, SocketFlags.None, buffer.Addr.Ptr, SocketAddress.Size);
 
-                if (bytesWritten == (int)SocketError.SocketError)
+                try
                 {
-                    InvokeErrorEvent(new SocketException());
-                }
-                else if (bytesWritten != buffer.Length)
-                {
-                    InvokeErrorEvent(new HotSocketException($"sendto() returned {bytesWritten} instead of expected {buffer.Length}."));
-                }
+                    if (bytesWritten == (int)SocketError.SocketError)
+                    {
+                        var errorCode = Windows.GetLastSocketError();
 
-                ReleaseWriteBuffer(buffer);
+                        // This can be OK if we are shutting down.
+                        if (errorCode == SocketError.Interrupted && _cts.IsCancellationRequested)
+                            break;
+
+                        InvokeErrorEvent(new SocketException((int)errorCode));
+                    }
+                    else if (bytesWritten != buffer.Length)
+                    {
+                        InvokeErrorEvent(new HotSocketException($"sendto() returned {bytesWritten} instead of expected {buffer.Length}."));
+                    }
+                }
+                finally
+                {
+                    ReleaseWriteBuffer(buffer);
+                }
             }
         }
         #endregion

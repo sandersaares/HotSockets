@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace HotSockets
 {
@@ -8,7 +9,19 @@ namespace HotSockets
     /// </summary>
     public sealed class SimpleMemoryManager : INativeMemoryManager
     {
-        public IntPtr Allocate(int size) => Marshal.AllocHGlobal(size);
-        public void Deallocate(IntPtr ptr) => Marshal.FreeHGlobal(ptr);
+        // Internal for tests: delta of allocations-deallocations.
+        internal long Delta;
+
+        public IntPtr Allocate(int size)
+        {
+            Interlocked.Increment(ref Delta);
+            return Marshal.AllocHGlobal(size);
+        }
+
+        public void Deallocate(IntPtr ptr)
+        {
+            Marshal.FreeHGlobal(ptr);
+            Interlocked.Decrement(ref Delta);
+        }
     }
 }
