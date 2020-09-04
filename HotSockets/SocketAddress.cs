@@ -11,14 +11,14 @@ namespace HotSockets
     /// <remarks>
     /// Instances are designed to be reused for allocation-free packet processing.
     /// </remarks>
-    public sealed class UnsafeSocketAddress : IDisposable
+    public sealed class SocketAddress : IDisposable
     {
         public const int Size = 28; /* Eyeballed from https://docs.microsoft.com/en-us/windows/win32/winsock/sockaddr-2 */
 
         // Family-specific to make initialization obvious. You don't need to keep it IPv4 if you don't want to.
-        public static UnsafeSocketAddress IPv4(ReadOnlySpan<byte> address, ushort port, INativeMemoryManager memoryManager)
+        public static SocketAddress IPv4(ReadOnlySpan<byte> address, ushort port, INativeMemoryManager memoryManager)
         {
-            var instance = new UnsafeSocketAddress(memoryManager)
+            var instance = new SocketAddress(memoryManager)
             {
                 AddressFamily = AddressFamily.InterNetwork,
                 Port = port
@@ -29,9 +29,9 @@ namespace HotSockets
         }
 
         // Family-specific to make initialization obvious. You don't need to keep it IPv6 if you don't want to.
-        public static UnsafeSocketAddress IPv6(ReadOnlySpan<byte> address, ushort port, INativeMemoryManager memoryManager)
+        public static SocketAddress IPv6(ReadOnlySpan<byte> address, ushort port, INativeMemoryManager memoryManager)
         {
-            var instance = new UnsafeSocketAddress(memoryManager)
+            var instance = new SocketAddress(memoryManager)
             {
                 AddressFamily = AddressFamily.InterNetworkV6,
                 Port = port
@@ -42,7 +42,7 @@ namespace HotSockets
         }
 
         // Auto-detects address family.
-        public static UnsafeSocketAddress New(ReadOnlySpan<byte> address, ushort port, INativeMemoryManager memoryManager)
+        public static SocketAddress New(ReadOnlySpan<byte> address, ushort port, INativeMemoryManager memoryManager)
         {
             switch (address.Length)
             {
@@ -55,9 +55,9 @@ namespace HotSockets
             }
         }
 
-        public static UnsafeSocketAddress Empty(INativeMemoryManager memoryManager) => new UnsafeSocketAddress(memoryManager);
+        public static SocketAddress Empty(INativeMemoryManager memoryManager) => new SocketAddress(memoryManager);
 
-        private UnsafeSocketAddress(INativeMemoryManager memoryManager)
+        private SocketAddress(INativeMemoryManager memoryManager)
         {
             _memoryManager = memoryManager;
 
@@ -65,7 +65,7 @@ namespace HotSockets
             Clear();
         }
 
-        ~UnsafeSocketAddress() => Dispose(false);
+        ~SocketAddress() => Dispose(false);
         public void Dispose() => Dispose(true);
 
         private void Dispose(bool disposing)
@@ -105,7 +105,7 @@ namespace HotSockets
         /// <summary>
         /// Gets or sets the address depending on the currently set AddressFamily.
         /// 
-        /// The setter copies data into the UnsafeSocketAddress. To update in-place, modify the returned span.
+        /// The setter copies data into the SocketAddress. To update in-place, modify the returned span.
         /// </summary>
         public Span<byte> Address
         {
@@ -134,7 +134,7 @@ namespace HotSockets
         /// <summary>
         /// Gets or sets the IPv4 address. Valid only if AddressFamily indicates IPv4.
         /// 
-        /// The setter copies data into the UnsafeSocketAddress. To update in-place, modify the returned span.
+        /// The setter copies data into the SocketAddress. To update in-place, modify the returned span.
         /// </summary>
         public Span<byte> AddressV4
         {
@@ -145,7 +145,7 @@ namespace HotSockets
         /// <summary>
         /// Gets or sets the IPv6 address. Valid only if AddressFamily indicates IPv6.
         /// 
-        /// The setter copies data into the UnsafeSocketAddress. To update in-place, modify the returned span.
+        /// The setter copies data into the SocketAddress. To update in-place, modify the returned span.
         /// </summary>
         public Span<byte> AddressV6
         {
@@ -156,16 +156,16 @@ namespace HotSockets
         public override string ToString()
         {
             if (Ptr == IntPtr.Zero)
-                return $"Disposed {nameof(UnsafeSocketAddress)}";
+                return $"Disposed {nameof(SocketAddress)}";
             else if (AddressFamily == AddressFamily.InterNetwork || AddressFamily == AddressFamily.InterNetworkV6)
                 return new IPEndPoint(new IPAddress(Address), Port).ToString();
             else if (AddressFamily == 0)
-                return $"Uninitialized {nameof(UnsafeSocketAddress)}";
+                return $"Uninitialized {nameof(SocketAddress)}";
 
             return $"Address from unsupported family {(int)AddressFamily}";
         }
 
-        public unsafe void CopyTo(UnsafeSocketAddress other)
+        public unsafe void CopyTo(SocketAddress other)
         {
             if (this == other)
                 return;

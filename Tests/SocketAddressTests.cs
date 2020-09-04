@@ -19,7 +19,7 @@ namespace Tests
             // 1.2.3.4
             var testAddress4 = Enumerable.Range(1, 4).Select(x => (byte)x).ToArray();
 
-            using var addr = UnsafeSocketAddress.Empty(_memoryManager);
+            using var addr = SocketAddress.Empty(_memoryManager);
 
             addr.AddressFamily = AddressFamily.InterNetworkV6;
             addr.Port = 12345;

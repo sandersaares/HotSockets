@@ -15,5 +15,13 @@ namespace HotSockets
 
             return buffer;
         }
+
+        /// <summary>
+        /// Creates a NEW INSTANCE of SocketAddress holding the socket's local address.
+        /// </summary>
+        public static SocketAddress GetLocalAddress(this IHotSocket socket, INativeMemoryManager memoryManager)
+        {
+            return SocketAddress.New(socket.LocalAddress, socket.LocalPort, memoryManager);
+        }
     }
 }

@@ -13,6 +13,6 @@
         /// <remarks>
         /// The socket retains ownership of all passed arguments. Copy them if you need to preserve any of the values.
         /// </remarks>
-        void ProcessPacket(IHotBuffer buffer, UnsafeSocketAddress from);
+        void ProcessPacket(IHotBuffer buffer, SocketAddress from);
     }
 }

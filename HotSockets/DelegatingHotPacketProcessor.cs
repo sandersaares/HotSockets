@@ -4,12 +4,12 @@ namespace HotSockets
 {
     public sealed class DelegatingHotPacketProcessor : IHotPacketProcessor
     {
-        public DelegatingHotPacketProcessor(Action<IHotBuffer, UnsafeSocketAddress> processPacket)
+        public DelegatingHotPacketProcessor(Action<IHotBuffer, SocketAddress> processPacket)
         {
             _processPacket = processPacket;
         }
 
-        private readonly Action<IHotBuffer, UnsafeSocketAddress> _processPacket;
-        public void ProcessPacket(IHotBuffer buffer, UnsafeSocketAddress from) => _processPacket(buffer, from);
+        private readonly Action<IHotBuffer, SocketAddress> _processPacket;
+        public void ProcessPacket(IHotBuffer buffer, SocketAddress from) => _processPacket(buffer, from);
     }
 }

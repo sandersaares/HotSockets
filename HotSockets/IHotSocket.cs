@@ -48,7 +48,7 @@ namespace HotSockets
         /// The socket does NOT take ownership of the address.
         /// The socket always owns all buffers, so it remains owner of buffer, as was the case before.
         /// </remarks>
-        void SubmitWriteBuffer(IHotBuffer buffer, UnsafeSocketAddress to);
+        void SubmitWriteBuffer(IHotBuffer buffer, SocketAddress to);
 
         /// <summary>
         /// If there is any type of error during processing, it is reported via this event.

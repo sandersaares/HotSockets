@@ -16,7 +16,7 @@ namespace HotSockets
         // One set of buffers for read, another set for write.
         private const int BufferCount = 32 * 1024;
 
-        public SimpleWindowsHotSocket(UnsafeSocketAddress bindTo, INativeMemoryManager memoryManager)
+        public SimpleWindowsHotSocket(SocketAddress bindTo, INativeMemoryManager memoryManager)
         {
             _memoryManager = memoryManager;
 
@@ -33,10 +33,10 @@ namespace HotSockets
 
             DisableUdpConnectionReset();
 
-            Windows.MustSucceed(Windows.bind(_socketHandle, bindTo.Ptr, UnsafeSocketAddress.Size));
+            Windows.MustSucceed(Windows.bind(_socketHandle, bindTo.Ptr, SocketAddress.Size));
 
-            _localAddress = UnsafeSocketAddress.Empty(_memoryManager);
-            var localAddressSize = UnsafeSocketAddress.Size;
+            _localAddress = SocketAddress.Empty(_memoryManager);
+            var localAddressSize = SocketAddress.Size;
 
             Windows.MustSucceed(Windows.getsockname(_socketHandle, _localAddress.Ptr, ref localAddressSize));
             LocalAddressFamily = _localAddress.AddressFamily;
@@ -106,7 +106,7 @@ namespace HotSockets
         public ReadOnlySpan<byte> LocalAddress => _localAddress.Address;
         public ushort LocalPort => _localAddress.Port;
 
-        private UnsafeSocketAddress _localAddress;
+        private SocketAddress _localAddress;
 
         private void DisableUdpConnectionReset()
         {
@@ -126,7 +126,7 @@ namespace HotSockets
                 _memoryManager = memoryManager;
 
                 Ptr = _memoryManager.Allocate(BufferLength);
-                Addr = UnsafeSocketAddress.Empty(_memoryManager);
+                Addr = SocketAddress.Empty(_memoryManager);
             }
 
             ~Buffer() => Dispose(false);
@@ -154,7 +154,7 @@ namespace HotSockets
             public IntPtr Ptr { get; private set; }
 
             // Most recently associated address (instance reused to avoid repeated allocations).
-            public UnsafeSocketAddress Addr { get; private set; }
+            public SocketAddress Addr { get; private set; }
 
             // Number of bytes currently in use.
             public int Length { get; internal set; }
@@ -223,7 +223,7 @@ namespace HotSockets
                 Buffer buffer;
                 HotHelpers.MustSucceed(_availableReadBuffers.TryTake(out buffer!), "Acquire read buffer after confirmation that one is available");
 
-                var addrSize = UnsafeSocketAddress.Size;
+                var addrSize = SocketAddress.Size;
                 var bytesRead = Windows.recvfrom(_socketHandle, buffer.Ptr, buffer.MaxLength, SocketFlags.None, buffer.Addr.Ptr, ref addrSize);
 
                 if (bytesRead <= 0)
@@ -308,7 +308,7 @@ namespace HotSockets
             _availableWriteBuffersReady.Release();
         }
 
-        public void SubmitWriteBuffer(IHotBuffer buffer, UnsafeSocketAddress to)
+        public void SubmitWriteBuffer(IHotBuffer buffer, SocketAddress to)
         {
             var ourBuffer = (Buffer)buffer;
             to.CopyTo(ourBuffer.Addr);
@@ -335,7 +335,7 @@ namespace HotSockets
                 Buffer buffer;
                 HotHelpers.MustSucceed(_pendingWriteBuffers.TryDequeue(out buffer!), "Acquire pending write buffer after confirmation that one is available");
 
-                var bytesWritten = Windows.sendto(_socketHandle, buffer.Ptr, buffer.Length, SocketFlags.None, buffer.Addr.Ptr, UnsafeSocketAddress.Size);
+                var bytesWritten = Windows.sendto(_socketHandle, buffer.Ptr, buffer.Length, SocketFlags.None, buffer.Addr.Ptr, SocketAddress.Size);
 
                 if (bytesWritten == (int)SocketError.SocketError)
                 {

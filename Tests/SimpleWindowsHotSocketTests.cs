@@ -16,7 +16,7 @@ namespace Tests
         [TestMethod]
         public void CreateAndDestroy_DoesNotThrow()
         {
-            using var bindTo = UnsafeSocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
+            using var bindTo = SocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
 
             using (var socket = new SimpleWindowsHotSocket(bindTo, _memoryManager))
             {
@@ -34,15 +34,15 @@ namespace Tests
             var ping = Encoding.UTF8.GetBytes("ping");
             var pong = Encoding.UTF8.GetBytes("pong");
 
-            using var bindToA = UnsafeSocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
-            using var bindToB = UnsafeSocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
+            using var bindToA = SocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
+            using var bindToB = SocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
 
             using var socketA = new SimpleWindowsHotSocket(bindToA, _memoryManager);
             using var socketB = new SimpleWindowsHotSocket(bindToA, _memoryManager);
 
             // Addresses they are really bound to.
-            using var boundA = UnsafeSocketAddress.New(socketA.LocalAddress, socketA.LocalPort, _memoryManager);
-            using var boundB = UnsafeSocketAddress.New(socketB.LocalAddress, socketB.LocalPort, _memoryManager);
+            using var boundA = SocketAddress.New(socketA.LocalAddress, socketA.LocalPort, _memoryManager);
+            using var boundB = SocketAddress.New(socketB.LocalAddress, socketB.LocalPort, _memoryManager);
 
             socketA.OnError += (s, e) => exception ??= e.GetException();
             socketB.OnError += (s, e) => exception ??= e.GetException();
@@ -50,7 +50,7 @@ namespace Tests
             var gotPing = new ManualResetEventSlim();
             var gotPong = new ManualResetEventSlim();
 
-            void ProcessPacketA(IHotBuffer packet, UnsafeSocketAddress from)
+            void ProcessPacketA(IHotBuffer packet, SocketAddress from)
             {
                 if (gotPong.IsSet)
                     Assert.Fail("Socket A received unexpected packet after it already got 'pong' packet.");
@@ -62,7 +62,7 @@ namespace Tests
                 gotPong.Set();
             }
 
-            void ProcessPacketB(IHotBuffer packet, UnsafeSocketAddress from)
+            void ProcessPacketB(IHotBuffer packet, SocketAddress from)
             {
                 if (gotPing.IsSet)
                     Assert.Fail("Socket B received unexpected packet after it already got 'ping' packet.");
