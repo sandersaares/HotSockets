@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace HotSockets
@@ -161,8 +162,10 @@ namespace HotSockets
 
             public int MaxLength => BufferLength;
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public unsafe ReadOnlySpan<byte> GetReadableSpan() => new ReadOnlySpan<byte>(Ptr.ToPointer(), Length);
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public unsafe Span<byte> SetLengthAndGetWritableSpan(int length)
             {
                 if (length < 0)
@@ -207,6 +210,14 @@ namespace HotSockets
 
         private void ReadThread()
         {
+            var addrSize = SocketAddress.Size;
+            IntPtr addrSizePtr;
+
+            unsafe
+            {
+                addrSizePtr = new IntPtr(&addrSize);
+            }
+
             while (!_cts.IsCancellationRequested)
             {
                 try
@@ -223,23 +234,21 @@ namespace HotSockets
                 Buffer buffer;
                 HotHelpers.MustSucceed(_availableReadBuffers.TryTake(out buffer!), "Acquire read buffer after confirmation that one is available");
 
-                var addrSize = SocketAddress.Size;
-                var bytesRead = Windows.recvfrom(_socketHandle, buffer.Ptr, buffer.MaxLength, SocketFlags.None, buffer.Addr.Ptr, ref addrSize);
+                var bytesRead = Windows.recvfrom(_socketHandle, buffer.Ptr, buffer.MaxLength, SocketFlags.None, buffer.Addr.Ptr, addrSizePtr);
 
                 if (bytesRead <= 0)
                 {
                     // We should never get 0 to signal disconnect because this is UDP and we do not close the socket until threads finish.
                     // Obviously, there was some sort of error. This is not necessarily critical error - the next read may work, so just loop.
 
-                    var errorEvent = OnError;
-                    errorEvent?.Invoke(this, new ErrorEventArgs(new SocketException()));
+                    InvokeErrorEvent(new SocketException());
 
                     _availableReadBuffers.Add(buffer); // Put it back - we ended up not using it.
                     _availableReadBuffersReady.Release();
                     continue;
                 }
 
-                buffer.Length = (ushort)bytesRead;
+                buffer.Length = bytesRead;
                 _completedReads.Enqueue(buffer);
                 _completedReadsReady.Release();
             }
@@ -269,8 +278,7 @@ namespace HotSockets
                 }
                 catch (Exception ex)
                 {
-                    var errorEvent = OnError;
-                    errorEvent?.Invoke(this, new ErrorEventArgs(ex));
+                    InvokeErrorEvent(ex);
                 }
 
                 _availableReadBuffers.Add(buffer);
@@ -339,13 +347,11 @@ namespace HotSockets
 
                 if (bytesWritten == (int)SocketError.SocketError)
                 {
-                    var errorEvent = OnError;
-                    errorEvent?.Invoke(this, new ErrorEventArgs(new SocketException()));
+                    InvokeErrorEvent(new SocketException());
                 }
                 else if (bytesWritten != buffer.Length)
                 {
-                    var errorEvent = OnError;
-                    errorEvent?.Invoke(this, new ErrorEventArgs(new HotSocketException($"sendto() returned {bytesWritten} instead of expected {buffer.Length}.")));
+                    InvokeErrorEvent(new HotSocketException($"sendto() returned {bytesWritten} instead of expected {buffer.Length}."));
                 }
 
                 _availableWriteBuffers.Add(buffer);
@@ -355,5 +361,19 @@ namespace HotSockets
         #endregion
 
         public event EventHandler<ErrorEventArgs>? OnError;
+
+        private void InvokeErrorEvent(Exception ex)
+        {
+            var errorEvent = OnError;
+
+            try
+            {
+                errorEvent?.Invoke(this, new ErrorEventArgs(ex));
+            }
+            catch
+            {
+                // No.
+            }
+        }
     }
 }

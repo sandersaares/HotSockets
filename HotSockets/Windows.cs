@@ -85,8 +85,8 @@ namespace HotSockets
             [In] IntPtr buffer,
             [In] int bufferLength,
             [In] SocketFlags socketFlags,
-            [Out] IntPtr socketAddress,
-            [In, Out] ref int socketAddressSize);
+            [In] IntPtr socketAddress,
+            [In] IntPtr socketAddressSize);
 
         [DllImport(Ws2_32, SetLastError = true)]
         internal static extern unsafe int sendto(
