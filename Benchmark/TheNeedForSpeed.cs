@@ -122,9 +122,11 @@ namespace Benchmark
                 Interlocked.Increment(ref _pingsReceived);
 
                 // Send pong.
-                var buffer = _socketB.AcquireWriteBuffer();
+                /*var buffer = _socketB.AcquireWriteBuffer();
                 buffer.SetLengthAndGetWritableSpan(PacketSize);
-                _socketB.SubmitWriteBuffer(buffer, _addressA);
+                _socketB.SubmitWriteBuffer(buffer, _addressA);*/
+
+                _socketB.ForwardPacketTo(packet, _addressA);
                 Interlocked.Increment(ref _pongsSent);
             }
 

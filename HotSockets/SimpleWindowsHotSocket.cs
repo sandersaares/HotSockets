@@ -162,6 +162,13 @@ namespace HotSockets
 
             public int MaxLength => BufferLength;
 
+            // Whether this is a read buffer temporarily made into a write buffer.
+            public bool IsReadBufferReusedAsWriteBuffer;
+
+            // This is increased when the buffer is redirected to be a write buffer.
+            // The epoch change indicates to the consume thread that the buffer is not to be released.
+            public long ReadBufferEpoch;
+
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public unsafe ReadOnlySpan<byte> GetReadableSpan() => new ReadOnlySpan<byte>(Ptr.ToPointer(), Length);
 
@@ -272,6 +279,8 @@ namespace HotSockets
                 Buffer buffer;
                 HotHelpers.MustSucceed(_completedReads.TryDequeue(out buffer!), "Acquire completed read buffer after confirmation that one is available");
 
+                long epoch = buffer.ReadBufferEpoch;
+
                 try
                 {
                     _processor!.ProcessPacket(buffer, buffer.Addr);
@@ -281,8 +290,12 @@ namespace HotSockets
                     InvokeErrorEvent(ex);
                 }
 
-                _availableReadBuffers.Add(buffer);
-                _availableReadBuffersReady.Release();
+                // If it was taken away during processing, the epoch was incremented and it is no longer ours to use.
+                if (buffer.ReadBufferEpoch == epoch)
+                {
+                    _availableReadBuffers.Add(buffer);
+                    _availableReadBuffersReady.Release();
+                }
             }
         }
         #endregion
@@ -298,7 +311,8 @@ namespace HotSockets
         private readonly ConcurrentQueue<Buffer> _pendingWriteBuffers = new ConcurrentQueue<Buffer>();
 
         // We use this to block the write thread if no buffers are ready.
-        private readonly SemaphoreSlim _pendingWriteBuffersReady = new SemaphoreSlim(0, BufferCount);
+        // *2 because we allow read buffers to be reused as write buffers temporarily.
+        private readonly SemaphoreSlim _pendingWriteBuffersReady = new SemaphoreSlim(0, BufferCount * 2);
 
         public IHotBuffer AcquireWriteBuffer()
         {
@@ -312,16 +326,40 @@ namespace HotSockets
 
         public void ReleaseWriteBuffer(IHotBuffer buffer)
         {
-            _availableWriteBuffers.Add((Buffer)buffer);
-            _availableWriteBuffersReady.Release();
+            var myBuffer = (Buffer)buffer;
+
+            if (myBuffer.IsReadBufferReusedAsWriteBuffer)
+            {
+                myBuffer.IsReadBufferReusedAsWriteBuffer = false;
+
+                _availableReadBuffers.Add(myBuffer);
+                _availableReadBuffersReady.Release();
+            }
+            else
+            {
+                _availableWriteBuffers.Add(myBuffer);
+                _availableWriteBuffersReady.Release();
+            }
         }
 
         public void SubmitWriteBuffer(IHotBuffer buffer, SocketAddress to)
         {
-            var ourBuffer = (Buffer)buffer;
-            to.CopyTo(ourBuffer.Addr);
+            var myBuffer = (Buffer)buffer;
+            to.CopyTo(myBuffer.Addr);
 
-            _pendingWriteBuffers.Enqueue(ourBuffer);
+            _pendingWriteBuffers.Enqueue(myBuffer);
+            _pendingWriteBuffersReady.Release();
+        }
+
+        public void ForwardPacketTo(IHotBuffer buffer, SocketAddress to)
+        {
+            var myBuffer = (Buffer)buffer;
+            to.CopyTo(myBuffer.Addr);
+
+            Interlocked.Increment(ref myBuffer.ReadBufferEpoch);
+            myBuffer.IsReadBufferReusedAsWriteBuffer = true;
+
+            _pendingWriteBuffers.Enqueue(myBuffer);
             _pendingWriteBuffersReady.Release();
         }
 
@@ -354,8 +392,7 @@ namespace HotSockets
                     InvokeErrorEvent(new HotSocketException($"sendto() returned {bytesWritten} instead of expected {buffer.Length}."));
                 }
 
-                _availableWriteBuffers.Add(buffer);
-                _availableWriteBuffersReady.Release();
+                ReleaseWriteBuffer(buffer);
             }
         }
         #endregion

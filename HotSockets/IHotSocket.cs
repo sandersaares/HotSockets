@@ -29,12 +29,10 @@ namespace HotSockets
         /// If no buffers are available, blocks until a buffer becomes available.
         /// </summary>
         /// <remarks>
-        /// Acquired buffers become locked until they are submitted back to the socket.
+        /// Acquired buffers become locked for your use until they are submitted back to the socket.
         /// </remarks>
         /// <exception cref="OperationCanceledException">Thrown if the socket is closed while blocked in this call.</exception>
         IHotBuffer AcquireWriteBuffer();
-
-        // TODO: IHotBuffer ConvertReadBufferToWriteBuffer(IHotBuffer buffer);
 
         /// <summary>
         /// If an acquired buffer cannot, for whatever reason, be submitted, you can release it here.
@@ -49,6 +47,18 @@ namespace HotSockets
         /// The socket always owns all buffers, so it remains owner of buffer, as was the case before.
         /// </remarks>
         void SubmitWriteBuffer(IHotBuffer buffer, SocketAddress to);
+
+        /// <summary>
+        /// Forward a packet stored in a read buffer (provided to packet processor) to a new destination without allocating a write buffer.
+        /// This can, depending on implementation, be a more optimal path if you don't need to touch the contents of the packet.
+        /// If no buffers are available, MAY block until a buffer becomes available (implementation-dependent).
+        /// </summary>
+        /// <remarks>
+        /// The socket does NOT take ownership of the address.
+        /// The socket always owns all buffers, so it remains owner of buffer, as was the case before.
+        /// </remarks>
+        /// <exception cref="OperationCanceledException">Thrown if the socket is closed while blocked in this call.</exception>
+        void ForwardPacketTo(IHotBuffer buffer, SocketAddress to);
 
         /// <summary>
         /// If there is any type of error during processing, it is reported via this event.
