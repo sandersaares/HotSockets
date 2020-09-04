@@ -15,17 +15,23 @@ namespace HotSockets
         // TODO: How does buffer count affect throughput?
 
         // One set of buffers for read, another set for write.
-        private const int BufferCount = 32 * 1024;
+        private int _bufferCount => HotSocketFineTuning.BufferCount;
 
         public SimpleWindowsHotSocket(SocketAddress bindTo, INativeMemoryManager memoryManager)
         {
             _memoryManager = memoryManager;
 
-            for (var i = 0; i < BufferCount; i++)
+            for (var i = 0; i < _bufferCount; i++)
             {
                 _availableReadBuffers.Add(new Buffer(_memoryManager));
                 _availableWriteBuffers.Add(new Buffer(_memoryManager));
             }
+
+            _availableReadBuffersReady = new SemaphoreSlim(_bufferCount, _bufferCount);
+            _availableWriteBuffersReady = new SemaphoreSlim(_bufferCount, _bufferCount);
+            _completedReadsReady = new SemaphoreSlim(0, _bufferCount);
+            // *2 because we allow read buffers to be reused as write buffers temporarily.
+            _pendingWriteBuffersReady = new SemaphoreSlim(0, _bufferCount * 2);
 
             _socketHandle = Windows.WSASocketW(bindTo.AddressFamily, SocketType.Dgram, ProtocolType.Udp, IntPtr.Zero, 0, Windows.SocketConstructorFlags.WSA_FLAG_OVERLAPPED | Windows.SocketConstructorFlags.WSA_FLAG_NO_HANDLE_INHERIT);
 
@@ -217,13 +223,13 @@ namespace HotSockets
         private readonly ConcurrentBag<Buffer> _availableReadBuffers = new ConcurrentBag<Buffer>();
 
         // We use this to block the read thread if no buffers are ready.
-        private readonly SemaphoreSlim _availableReadBuffersReady = new SemaphoreSlim(BufferCount, BufferCount);
+        private readonly SemaphoreSlim _availableReadBuffersReady;
 
         // Then we put the data here. After it is processed, it goes back to above bag.
         private readonly ConcurrentQueue<Buffer> _completedReads = new ConcurrentQueue<Buffer>();
 
         // We use this to block the consume thread if no buffers are ready.
-        private readonly SemaphoreSlim _completedReadsReady = new SemaphoreSlim(0, BufferCount);
+        private readonly SemaphoreSlim _completedReadsReady;
 
         private void ReadThread()
         {
@@ -327,14 +333,13 @@ namespace HotSockets
         private readonly ConcurrentBag<Buffer> _availableWriteBuffers = new ConcurrentBag<Buffer>();
 
         // We use this to block write buffer acquisition if no buffers are ready.
-        private readonly SemaphoreSlim _availableWriteBuffersReady = new SemaphoreSlim(BufferCount, BufferCount);
+        private readonly SemaphoreSlim _availableWriteBuffersReady;
 
         // Buffers that have been filled with data and are awaiting final submission to the socket.
         private readonly ConcurrentQueue<Buffer> _pendingWriteBuffers = new ConcurrentQueue<Buffer>();
 
         // We use this to block the write thread if no buffers are ready.
-        // *2 because we allow read buffers to be reused as write buffers temporarily.
-        private readonly SemaphoreSlim _pendingWriteBuffersReady = new SemaphoreSlim(0, BufferCount * 2);
+        private readonly SemaphoreSlim _pendingWriteBuffersReady;
 
         public IHotBuffer AcquireWriteBuffer()
         {

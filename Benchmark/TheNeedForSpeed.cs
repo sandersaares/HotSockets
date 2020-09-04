@@ -18,7 +18,7 @@ namespace Benchmark
     /// <summary>
     /// We send N packets from socket A to socket B and measure how long it takes. That's it.
     /// </summary>
-    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 10, warmupCount: 0, targetCount: 1, invocationCount: 1)]
+    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 20, warmupCount: 0, targetCount: 1, invocationCount: 1)]
     public class TheNeedForSpeed : IDisposable
     {
         [Params(500_000)]
@@ -27,8 +27,13 @@ namespace Benchmark
         [Params(250)]
         public int PacketSize;
 
-        [Params(1, 2)]
+        // SimpleWindowsHotSocket: more threads makes it slower.
+        [Params(1, 4)]
         public int SendThreadCount;
+
+        // SimpleWindowsHotSocket: does not have any performance impact under simple benchmarks.
+        [Params(64)]
+        public int BufferCount;
 
         /// <summary>
         /// If we think the benchmark has finished but it doesn't seem to be finishing, we give it this much time before we call it quits.
@@ -45,8 +50,17 @@ namespace Benchmark
         {
         }
 
+#pragma warning disable CS8618 // Non-nullable field is uninitialized. Consider declaring as nullable.
         public TheNeedForSpeed()
+#pragma warning restore CS8618 // Non-nullable field is uninitialized. Consider declaring as nullable.
         {
+        }
+
+        [IterationSetup]
+        public void SetupBenchmark()
+        {
+            HotSocketFineTuning.BufferCount = BufferCount;
+
             using var bindTo = SocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
 
             _socketA = new SimpleWindowsHotSocket(bindTo, _memoryManager);
@@ -57,7 +71,6 @@ namespace Benchmark
 
             _addressA = _socketA.GetLocalAddress(_memoryManager);
             _addressB = _socketB.GetLocalAddress(_memoryManager);
-           
         }
 
         public void Dispose()
@@ -69,11 +82,11 @@ namespace Benchmark
             _addressA.Dispose();
         }
 
-        private readonly IHotSocket _socketA;
-        private readonly IHotSocket _socketB;
+        private IHotSocket _socketA;
+        private IHotSocket _socketB;
 
-        private readonly SocketAddress _addressA;
-        private readonly SocketAddress _addressB;
+        private SocketAddress _addressA;
+        private SocketAddress _addressB;
 
         private static readonly INativeMemoryManager _memoryManager = new SimpleMemoryManager();
 
