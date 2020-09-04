@@ -18,7 +18,7 @@ namespace Benchmark
     /// <summary>
     /// We send N packets from socket A to socket B and measure how long it takes. That's it.
     /// </summary>
-    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 1, warmupCount: 0, targetCount: 1, invocationCount: 1)]
+    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 10, warmupCount: 0, targetCount: 1, invocationCount: 1)]
     public class TheNeedForSpeed : IDisposable
     {
         [Params(500_000)]
