@@ -18,7 +18,7 @@ namespace Benchmark
     /// <summary>
     /// We send N packets from socket A to socket B and measure how long it takes. That's it.
     /// </summary>
-    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 20, warmupCount: 0, targetCount: 1, invocationCount: 1)]
+    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 10, warmupCount: 0, targetCount: 1, invocationCount: 1)]
     public class TheNeedForSpeed : IDisposable
     {
         [Params(500_000)]
@@ -28,7 +28,7 @@ namespace Benchmark
         public int PacketSize;
 
         // SimpleWindowsHotSocket: more threads makes it slower.
-        [Params(1, 4)]
+        [Params(1)]
         public int SendThreadCount;
 
         // SimpleWindowsHotSocket: does not have any performance impact under simple benchmarks.
@@ -39,7 +39,7 @@ namespace Benchmark
         /// If we think the benchmark has finished but it doesn't seem to be finishing, we give it this much time before we call it quits.
         /// This might happen because some packets got lost on the way, so we'll never see all of them arrive. That's okay - we measure loss%, too.
         /// </summary>
-        private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(1);
 
         /// <summary>
         /// When we are waiting for timeout, we consider the receiving completed if no more packets have arrived in this amount of time.
