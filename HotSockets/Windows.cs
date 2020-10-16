@@ -79,6 +79,14 @@ namespace HotSockets
             [In] IntPtr socketAddress,
             [In, Out] ref int socketAddressSize);
 
+        [DllImport(Ws2_32, ExactSpelling = true, SetLastError = true)]
+        internal static extern SocketError setsockopt(
+            [In] IntPtr socketHandle,
+            [In] int level,
+            [In] int optname,
+            [In] ref int optval,
+            [In] int optlen);
+
         [DllImport(Ws2_32, SetLastError = true)]
         internal static extern unsafe int recvfrom(
             [In] IntPtr socketHandle,

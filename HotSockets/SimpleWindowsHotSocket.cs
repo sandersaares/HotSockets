@@ -10,10 +10,19 @@ namespace HotSockets
     /// <summary>
     /// Very basic Windows implementation using blocking I/O. Only UDP is supported.
     /// </summary>
+    /// <remarks>
+    /// Either 1 or NumCpus native sockets are bound to the same port (depending on EnableMultiCore flag).
+    /// 
+    /// One thread per native socket receives packets from OS.
+    /// One thread per native socket sends queued packets.
+    /// One thread executes callbacks on received packets.
+    /// 
+    /// Queues and buffers are shared between all native sockets.
+    /// 
+    /// No consideration given for scheduling - the OS will do as the OS will do.
+    /// </remarks>
     public sealed class SimpleWindowsHotSocket : IHotSocket
     {
-        // TODO: How does buffer count affect throughput?
-
         // One set of buffers for read, another set for write.
         private int _bufferCount => HotSocketFineTuning.BufferCount;
 
@@ -33,38 +42,48 @@ namespace HotSockets
             // *2 because we allow read buffers to be reused as write buffers temporarily.
             _pendingWriteBuffersReady = new SemaphoreSlim(0, _bufferCount * 2);
 
-            _socketHandle = Windows.WSASocketW(bindTo.AddressFamily, SocketType.Dgram, ProtocolType.Udp, IntPtr.Zero, 0, Windows.SocketConstructorFlags.WSA_FLAG_OVERLAPPED | Windows.SocketConstructorFlags.WSA_FLAG_NO_HANDLE_INHERIT);
+            var nativeSocketCount = HotSocketFineTuning.EnableMultiCore ? Environment.ProcessorCount : 1;
+            var isSharedEndpoint = nativeSocketCount > 1;
 
-            if (_socketHandle == Windows.InvalidHandle)
-                throw new SocketException();
+            _nativeSockets = new NativeSocket[nativeSocketCount];
 
-            DisableUdpConnectionReset();
-
-            Windows.MustSucceed(Windows.bind(_socketHandle, bindTo.Ptr, SocketAddress.Size));
-
-            _localAddress = SocketAddress.Empty(_memoryManager);
-            var localAddressSize = SocketAddress.Size;
-
-            Windows.MustSucceed(Windows.getsockname(_socketHandle, _localAddress.Ptr, ref localAddressSize));
-            LocalAddressFamily = _localAddress.AddressFamily;
-
-            _readThread = new Thread(ReadThread)
+            for (var i = 0; i < nativeSocketCount; i++)
             {
-                IsBackground = true,
-                Name = $"{nameof(SimpleWindowsHotSocket)} read on {bindTo}"
-            };
+                // We bind the first one to whatever bindTo says (e.g. auto assigned port on any IP address).
+                // Then we bind the next ones to whatever the first one got bound to (e.g. specific port on specific IP address).
+
+                var bindThisOneTo = i == 0 ? bindTo : _nativeSockets[0].BoundTo;
+                _nativeSockets[i] = new NativeSocket(bindThisOneTo, isSharedEndpoint, _memoryManager);
+            }
+
+            _localAddress = _nativeSockets[0].BoundTo;
+
+            _readThreads = new Thread[nativeSocketCount];
             _consumeThread = new Thread(ConsumeThread)
             {
                 IsBackground = true,
                 Name = $"{nameof(SimpleWindowsHotSocket)} consume on {bindTo}"
             };
-            _writeThread = new Thread(WriteThread)
+            _writeThreads = new Thread[nativeSocketCount];
+
+            for (var i = 0; i < nativeSocketCount; i++)
             {
-                IsBackground = true,
-                Name = $"{nameof(SimpleWindowsHotSocket)} write on {bindTo}"
-            };
+                _readThreads[i] = new Thread(ReadThread)
+                {
+                    IsBackground = true,
+                    Name = $"{nameof(SimpleWindowsHotSocket)} read #{i} on {bindTo}"
+                };
+                _writeThreads[i] = new Thread(WriteThread)
+                {
+                    IsBackground = true,
+                    Name = $"{nameof(SimpleWindowsHotSocket)} write #{i} on {bindTo}"
+                };
+            }
+
             _consumeThread.Start();
-            _writeThread.Start();
+
+            for (var i = 0; i < nativeSocketCount; i++)
+                _writeThreads[i].Start(i);
         }
 
         #region Lifecycle
@@ -73,24 +92,30 @@ namespace HotSockets
 
         private void Dispose(bool disposing)
         {
-            // We close the socket immediately to ensure that none of our threads stay blocked on it.
-            // This should immediately cause all threads to exit, even before we signal cancellation.
-            if (_socketHandle != IntPtr.Zero)
-            {
-                Windows.closesocket(_socketHandle);
-                _socketHandle = IntPtr.Zero;
-            }
-
             if (disposing)
             {
+                // We close the sockets immediately to ensure that none of our threads stay blocked on them.
+                // This should immediately cause all threads to exit, even before we signal cancellation.
+                foreach (var socket in _nativeSockets)
+                    socket.Dispose();
+
                 // Signal all threads to stop.
                 _cts.Cancel();
 
                 // Wait for all threads to realize we are stopping.
                 _consumeThread.Join();
 
-                if (_readThread.IsAlive)
-                    _readThread.Join();
+                foreach (var thread in _readThreads)
+                {
+                    if (thread.IsAlive)
+                        thread.Join();
+                }
+
+                foreach (var thread in _writeThreads)
+                {
+                    if (thread.IsAlive)
+                        thread.Join();
+                }
 
                 _cts.Dispose();
 
@@ -113,26 +138,78 @@ namespace HotSockets
             }
         }
 
-        private IntPtr _socketHandle;
+        private NativeSocket[] _nativeSockets;
 
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
         private readonly INativeMemoryManager _memoryManager;
 
-        public AddressFamily LocalAddressFamily { get; }
+        public AddressFamily LocalAddressFamily => _localAddress.AddressFamily;
         public ReadOnlySpan<byte> LocalAddress => _localAddress.Address;
         public ushort LocalPort => _localAddress.Port;
 
         private SocketAddress _localAddress;
-
-        private void DisableUdpConnectionReset()
-        {
-            const uint code = unchecked(0x80000000 | 0x18000000 | 12);
-            int value = 0; // 0 means "do not raise connection reset errors if UDP peer goes away"
-
-            Windows.MustSucceed(Windows.ioctlsocket(_socketHandle, code, ref value));
-        }
         #endregion
+
+        private sealed class NativeSocket : IDisposable
+        {
+            public IntPtr Handle { get; private set; }
+            public SocketAddress BoundTo { get; private set; }
+
+            public NativeSocket(SocketAddress bindTo, bool isSharedEndpoint, INativeMemoryManager memoryManager)
+            {
+                Handle = Windows.WSASocketW(bindTo.AddressFamily, SocketType.Dgram, ProtocolType.Udp, IntPtr.Zero, 0, Windows.SocketConstructorFlags.WSA_FLAG_OVERLAPPED | Windows.SocketConstructorFlags.WSA_FLAG_NO_HANDLE_INHERIT);
+
+                if (Handle == Windows.InvalidHandle)
+                    throw new SocketException();
+
+                DisableUdpConnectionReset();
+
+                if (isSharedEndpoint)
+                    EnableEndpointSharing();
+
+                Windows.MustSucceed(Windows.bind(Handle, bindTo.Ptr, SocketAddress.Size));
+
+                BoundTo = SocketAddress.Empty(memoryManager);
+                var localAddressSize = SocketAddress.Size;
+
+                Windows.MustSucceed(Windows.getsockname(Handle, BoundTo.Ptr, ref localAddressSize));
+            }
+
+            ~NativeSocket() => Dispose(false);
+            public void Dispose() => Dispose(true);
+
+            private void Dispose(bool disposing)
+            {
+                if (Handle != IntPtr.Zero)
+                {
+                    Windows.closesocket(Handle);
+                    Handle = IntPtr.Zero;
+                }
+
+                if (disposing)
+                {
+                    BoundTo.Dispose();
+
+                    GC.SuppressFinalize(this);
+                }
+            }
+
+            private void DisableUdpConnectionReset()
+            {
+                const uint code = unchecked(0x80000000 | 0x18000000 | 12);
+                int value = 0; // 0 means "do not raise connection reset errors if UDP peer goes away"
+
+                Windows.MustSucceed(Windows.ioctlsocket(Handle, code, ref value));
+            }
+
+            private void EnableEndpointSharing()
+            {
+                int value = 1; // 1 means yes
+
+                Windows.MustSucceed(Windows.setsockopt(Handle, (int)SocketOptionLevel.Socket, (int)SocketOptionName.ReuseAddress, ref value, sizeof(int)));
+            }
+        }
 
         private sealed class Buffer : IHotBuffer
         {
@@ -205,10 +282,9 @@ namespace HotSockets
         #region Reading
         private IHotPacketProcessor? _processor;
 
-        // TODO: Does the core-affinity of these threads have relevance? Do we lose or gain if we co-host on same core or split them up?
-        private Thread _readThread;
+        private Thread[] _readThreads;
         private Thread _consumeThread;
-        private Thread _writeThread;
+        private Thread[] _writeThreads;
 
         public void StartReadingPackets(IHotPacketProcessor processor)
         {
@@ -216,7 +292,9 @@ namespace HotSockets
                 throw new InvalidOperationException("Reading of packets from the IHotSocket has already been started.");
 
             _processor = processor;
-            _readThread.Start();
+
+            for (var i = 0; i < _readThreads.Length; i++)
+                _readThreads[i].Start(i);
         }
 
         // We fill these buffers with data. As long as we have buffers here, we keep reading more data from the socket.
@@ -231,8 +309,10 @@ namespace HotSockets
         // We use this to block the consume thread if no buffers are ready.
         private readonly SemaphoreSlim _completedReadsReady;
 
-        private void ReadThread()
+        private void ReadThread(object? boxedIndex)
         {
+            var socketIndex = (int)boxedIndex!;
+
             var addrSize = SocketAddress.Size;
             IntPtr addrSizePtr;
 
@@ -257,7 +337,7 @@ namespace HotSockets
                 Buffer buffer;
                 HotHelpers.MustSucceed(_availableReadBuffers.TryTake(out buffer!), "Acquire read buffer after confirmation that one is available");
 
-                var bytesRead = Windows.recvfrom(_socketHandle, buffer.Ptr, buffer.MaxLength, SocketFlags.None, buffer.Addr.Ptr, addrSizePtr);
+                var bytesRead = Windows.recvfrom(_nativeSockets[socketIndex].Handle, buffer.Ptr, buffer.MaxLength, SocketFlags.None, buffer.Addr.Ptr, addrSizePtr);
 
                 if (bytesRead <= 0)
                 {
@@ -390,8 +470,10 @@ namespace HotSockets
             _pendingWriteBuffersReady.Release();
         }
 
-        private void WriteThread()
+        private void WriteThread(object? boxedIndex)
         {
+            var socketIndex = (int)boxedIndex!;
+
             while (true)
             {
                 try
@@ -408,7 +490,7 @@ namespace HotSockets
                 Buffer buffer;
                 HotHelpers.MustSucceed(_pendingWriteBuffers.TryDequeue(out buffer!), "Acquire pending write buffer after confirmation that one is available");
 
-                var bytesWritten = Windows.sendto(_socketHandle, buffer.Ptr, buffer.Length, SocketFlags.None, buffer.Addr.Ptr, SocketAddress.Size);
+                var bytesWritten = Windows.sendto(_nativeSockets[socketIndex].Handle, buffer.Ptr, buffer.Length, SocketFlags.None, buffer.Addr.Ptr, SocketAddress.Size);
 
                 try
                 {

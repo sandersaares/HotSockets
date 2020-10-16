@@ -18,7 +18,7 @@ namespace Benchmark
     /// <summary>
     /// We send N packets from socket A to socket B and measure how long it takes. That's it.
     /// </summary>
-    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 10, warmupCount: 0, targetCount: 1, invocationCount: 1)]
+    [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.ColdStart, launchCount: 50, warmupCount: 0, targetCount: 1, invocationCount: 1)]
     public class TheNeedForSpeed : IDisposable
     {
         [Params(500_000)]
@@ -28,12 +28,15 @@ namespace Benchmark
         public int PacketSize;
 
         // SimpleWindowsHotSocket: more threads makes it slower.
-        [Params(1)]
+        [Params(1, 4)]
         public int SendThreadCount;
 
         // SimpleWindowsHotSocket: does not have any performance impact under simple benchmarks.
-        [Params(64)]
+        [Params(64, 1024)]
         public int BufferCount;
+
+        [Params(false, true)]
+        public bool MultiCore;
 
         /// <summary>
         /// If we think the benchmark has finished but it doesn't seem to be finishing, we give it this much time before we call it quits.
@@ -60,6 +63,7 @@ namespace Benchmark
         public void SetupBenchmark()
         {
             HotSocketFineTuning.BufferCount = BufferCount;
+            HotSocketFineTuning.EnableMultiCore = MultiCore;
 
             using var bindTo = SocketAddress.IPv4(new byte[] { 127, 0, 0, 1 }, 0, _memoryManager);
 
